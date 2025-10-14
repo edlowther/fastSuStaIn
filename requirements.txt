@@ -10,3 +10,6 @@ pybind11
 awkde @ git+https://github.com/noxtoby/awkde.git
 kde_ebm @ git+https://github.com/ucl-pond/kde_ebm.git
 tqdm
+# GPU acceleration dependencies
+torch>=1.12.0
+torchvision
