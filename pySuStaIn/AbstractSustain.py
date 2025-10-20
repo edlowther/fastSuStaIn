@@ -111,10 +111,20 @@ class AbstractSustain(ABC):
             np_version                  = float(np.__version__.split('.')[0] + '.' + np.__version__.split('.')[1])
             assert np_version >= 1.18, "numpy version must be >= 1.18 for parallelization to work properly."
 
-            self.pool                   = pathos.multiprocessing.ProcessingPool() #pathos.multiprocessing.ParallelPool()
-            self.pool.ncpus             = multiprocessing.cpu_count()
+            # Use concurrent.futures instead of pathos to avoid dill compatibility issues
+            try:
+                from concurrent.futures import ThreadPoolExecutor
+                self.pool = ThreadPoolExecutor(max_workers=multiprocessing.cpu_count())
+                self.pool.ncpus = multiprocessing.cpu_count()
+                print("Using ThreadPoolExecutor for parallel startpoints (avoids dill compatibility issues)")
+            except ImportError:
+                # Fallback to serial execution
+                self.pool = None
+                self.pool.ncpus = 1
+                print("Warning: ThreadPoolExecutor not available, using serial execution")
         else:
-            self.pool                   = pathos.serial.SerialPool()
+            self.pool = None
+            self.pool.ncpus = 1
 
     #********************* PUBLIC METHODS
     def run_sustain_algorithm(self, plot=False, plot_format="png", **kwargs):
@@ -709,7 +719,13 @@ class AbstractSustain(ABC):
 
         partial_iter                        = partial(self._find_ml_iteration, sustainData)
         seed_sequences = np.random.SeedSequence(self.global_rng.integers(1e10))
-        pool_output_list                    = self.pool.map(partial_iter, seed_sequences.spawn(self.N_startpoints))
+        
+        if self.pool is None:
+            # Serial execution
+            pool_output_list = [partial_iter(seed) for seed in seed_sequences.spawn(self.N_startpoints)]
+        else:
+            # Parallel execution
+            pool_output_list = self.pool.map(partial_iter, seed_sequences.spawn(self.N_startpoints))
 
         if ~isinstance(pool_output_list, list):
             pool_output_list                = list(pool_output_list)
@@ -764,7 +780,13 @@ class AbstractSustain(ABC):
 
         partial_iter                        = partial(self._find_ml_split_iteration, sustainData)
         seed_sequences = np.random.SeedSequence(self.global_rng.integers(1e10))
-        pool_output_list                    = self.pool.map(partial_iter, seed_sequences.spawn(self.N_startpoints))
+        
+        if self.pool is None:
+            # Serial execution
+            pool_output_list = [partial_iter(seed) for seed in seed_sequences.spawn(self.N_startpoints)]
+        else:
+            # Parallel execution
+            pool_output_list = self.pool.map(partial_iter, seed_sequences.spawn(self.N_startpoints))
 
         if ~isinstance(pool_output_list, list):
             pool_output_list                = list(pool_output_list)
@@ -838,7 +860,13 @@ class AbstractSustain(ABC):
 
         partial_iter                        = partial(self._find_ml_mixture_iteration, sustainData, seq_init, f_init)
         seed_sequences = np.random.SeedSequence(self.global_rng.integers(1e10))
-        pool_output_list                    = self.pool.map(partial_iter, seed_sequences.spawn(self.N_startpoints))
+        
+        if self.pool is None:
+            # Serial execution
+            pool_output_list = [partial_iter(seed) for seed in seed_sequences.spawn(self.N_startpoints)]
+        else:
+            # Parallel execution
+            pool_output_list = self.pool.map(partial_iter, seed_sequences.spawn(self.N_startpoints))
 
         if ~isinstance(pool_output_list, list):
             pool_output_list                = list(pool_output_list)
