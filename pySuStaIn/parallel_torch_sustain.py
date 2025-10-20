@@ -71,6 +71,11 @@ class ParallelTorchZScoreSustainMissingData(TorchZScoreSustainMissingData):
             seed, use_gpu, device_id
         )
         
+        # Ensure the __sustainData attribute is accessible for AbstractSustain methods
+        # The parent class stores it as _ZscoreSustainMissingData__sustainData due to name mangling
+        if hasattr(self, '_ZscoreSustainMissingData__sustainData'):
+            self._AbstractSustain__sustainData = self._ZscoreSustainMissingData__sustainData
+        
         # Store parallel MCMC parameters
         self.use_parallel_mcmc = use_parallel_mcmc
         self.n_mcmc_chains = n_mcmc_chains
