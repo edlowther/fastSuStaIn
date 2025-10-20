@@ -69,7 +69,7 @@ class TorchZScoreSustainMissingData(ZscoreSustainMissingData):
         
         # Create PyTorch-enabled data object
         self.torch_sustain_data = create_torch_zscore_data(
-            data, self.__sustainData.getNumStages(), self.torch_backend
+            data, self._ZScoreSustainMissingData__sustainData.getNumStages(), self.torch_backend
         )
         
         # Create GPU-accelerated likelihood calculator
@@ -169,7 +169,7 @@ class TorchZScoreSustainMissingData(ZscoreSustainMissingData):
             if self.use_gpu:
                 # Recreate PyTorch components
                 self.torch_sustain_data = create_torch_zscore_data(
-                    self.__sustainData.data, self.__sustainData.getNumStages(), self.torch_backend
+                    self._ZScoreSustainMissingData__sustainData.data, self._ZScoreSustainMissingData__sustainData.getNumStages(), self.torch_backend
                 )
                 
                 self.torch_likelihood_calculator = create_zscore_missing_data_likelihood_calculator(
