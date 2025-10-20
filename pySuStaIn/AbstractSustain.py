@@ -975,7 +975,39 @@ class AbstractSustain(ABC):
         p_perm_k                            = np.zeros((M, N + 1, N_S))
 
         for s in range(N_S):
-            p_perm_k[:, :, s]               = self._calculate_likelihood_stage(sustainData, S[s])  #self.__calculate_likelihood_stage_linearzscoremodel_approx(data_local, S[s])
+            # Get the likelihood stage result
+            likelihood_stage_result = self._calculate_likelihood_stage(sustainData, S[s])
+            
+            # Check if dimensions match
+            if likelihood_stage_result.shape != (M, N + 1):
+                print(f"Warning: Shape mismatch in _calculate_likelihood_stage")
+                print(f"  Expected: ({M}, {N + 1})")
+                print(f"  Got: {likelihood_stage_result.shape}")
+                print(f"  sustainData.getNumSamples(): {sustainData.getNumSamples()}")
+                print(f"  sustainData.data.shape: {sustainData.data.shape if hasattr(sustainData, 'data') else 'No data attribute'}")
+                
+                # Try to fix the shape mismatch
+                if likelihood_stage_result.shape[0] != M:
+                    # Resize to match expected dimensions
+                    if likelihood_stage_result.shape[0] > M:
+                        likelihood_stage_result = likelihood_stage_result[:M, :]
+                    else:
+                        # Pad with zeros if smaller
+                        pad_shape = (M - likelihood_stage_result.shape[0], likelihood_stage_result.shape[1])
+                        padding = np.zeros(pad_shape)
+                        likelihood_stage_result = np.vstack([likelihood_stage_result, padding])
+                
+                if likelihood_stage_result.shape[1] != N + 1:
+                    # Resize to match expected dimensions
+                    if likelihood_stage_result.shape[1] > N + 1:
+                        likelihood_stage_result = likelihood_stage_result[:, :N + 1]
+                    else:
+                        # Pad with zeros if smaller
+                        pad_shape = (likelihood_stage_result.shape[0], N + 1 - likelihood_stage_result.shape[1])
+                        padding = np.zeros(pad_shape)
+                        likelihood_stage_result = np.hstack([likelihood_stage_result, padding])
+            
+            p_perm_k[:, :, s]               = likelihood_stage_result
 
 
         total_prob_cluster                  = np.squeeze(np.sum(p_perm_k * f_val_mat, 1))

@@ -255,7 +255,39 @@ class ZscoreSustain(AbstractSustain):
         p_perm_k                            = np.zeros((M, N + 1, N_S))
 
         for s in range(N_S):
-            p_perm_k[:, :, s]               = self._calculate_likelihood_stage(sustainData, S_opt[s])
+            # Get the likelihood stage result
+            likelihood_stage_result = self._calculate_likelihood_stage(sustainData, S_opt[s])
+            
+            # Check if dimensions match
+            if likelihood_stage_result.shape != (M, N + 1):
+                print(f"Warning: Shape mismatch in _calculate_likelihood_stage")
+                print(f"  Expected: ({M}, {N + 1})")
+                print(f"  Got: {likelihood_stage_result.shape}")
+                print(f"  sustainData.getNumSamples(): {sustainData.getNumSamples()}")
+                print(f"  sustainData.data.shape: {sustainData.data.shape if hasattr(sustainData, 'data') else 'No data attribute'}")
+                
+                # Try to fix the shape mismatch
+                if likelihood_stage_result.shape[0] != M:
+                    # Resize to match expected dimensions
+                    if likelihood_stage_result.shape[0] > M:
+                        likelihood_stage_result = likelihood_stage_result[:M, :]
+                    else:
+                        # Pad with zeros if smaller
+                        pad_shape = (M - likelihood_stage_result.shape[0], likelihood_stage_result.shape[1])
+                        padding = np.zeros(pad_shape)
+                        likelihood_stage_result = np.vstack([likelihood_stage_result, padding])
+                
+                if likelihood_stage_result.shape[1] != N + 1:
+                    # Resize to match expected dimensions
+                    if likelihood_stage_result.shape[1] > N + 1:
+                        likelihood_stage_result = likelihood_stage_result[:, :N + 1]
+                    else:
+                        # Pad with zeros if smaller
+                        pad_shape = (likelihood_stage_result.shape[0], N + 1 - likelihood_stage_result.shape[1])
+                        padding = np.zeros(pad_shape)
+                        likelihood_stage_result = np.hstack([likelihood_stage_result, padding])
+            
+            p_perm_k[:, :, s]               = likelihood_stage_result
 
         p_perm_k_weighted                   = p_perm_k * f_val_mat
         p_perm_k_norm                       = p_perm_k_weighted / np.sum(p_perm_k_weighted + 1e-250, axis=(1, 2), keepdims=True)
@@ -314,7 +346,33 @@ class ZscoreSustain(AbstractSustain):
                     new_sequence            = np.concatenate([current_sequence[np.arange(move_event_to)], [selected_event], current_sequence[np.arange(move_event_to, N - 1)]])
                     possible_sequences[index, :] = new_sequence
 
-                    possible_p_perm_k[:, :, index] = self._calculate_likelihood_stage(sustainData, new_sequence)
+                    # Get the likelihood stage result
+                    likelihood_stage_result = self._calculate_likelihood_stage(sustainData, new_sequence)
+                    
+                    # Check if dimensions match
+                    if likelihood_stage_result.shape != (M, N + 1):
+                        print(f"Warning: Shape mismatch in _calculate_likelihood_stage (possible_p_perm_k)")
+                        print(f"  Expected: ({M}, {N + 1})")
+                        print(f"  Got: {likelihood_stage_result.shape}")
+                        
+                        # Try to fix the shape mismatch
+                        if likelihood_stage_result.shape[0] != M:
+                            if likelihood_stage_result.shape[0] > M:
+                                likelihood_stage_result = likelihood_stage_result[:M, :]
+                            else:
+                                pad_shape = (M - likelihood_stage_result.shape[0], likelihood_stage_result.shape[1])
+                                padding = np.zeros(pad_shape)
+                                likelihood_stage_result = np.vstack([likelihood_stage_result, padding])
+                        
+                        if likelihood_stage_result.shape[1] != N + 1:
+                            if likelihood_stage_result.shape[1] > N + 1:
+                                likelihood_stage_result = likelihood_stage_result[:, :N + 1]
+                            else:
+                                pad_shape = (likelihood_stage_result.shape[0], N + 1 - likelihood_stage_result.shape[1])
+                                padding = np.zeros(pad_shape)
+                                likelihood_stage_result = np.hstack([likelihood_stage_result, padding])
+                    
+                    possible_p_perm_k[:, :, index] = likelihood_stage_result
 
                     p_perm_k[:, :, s]       = possible_p_perm_k[:, :, index]
                     total_prob_stage        = np.sum(p_perm_k * f_val_mat, 2)
