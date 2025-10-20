@@ -68,8 +68,21 @@ class TorchZScoreSustainMissingData(ZscoreSustainMissingData):
         self.use_gpu = self.torch_backend.use_gpu
         
         # Create PyTorch-enabled data object
+        # Access the sustainData attribute directly (it should be available after super().__init__)
+        sustain_data = getattr(self, '_ZscoreSustainMissingData__sustainData', None)
+        if sustain_data is None:
+            # Fallback: try different possible attribute names
+            for attr_name in ['__sustainData', '_sustainData', 'sustainData']:
+                sustain_data = getattr(self, attr_name, None)
+                if sustain_data is not None:
+                    break
+        
+        if sustain_data is None:
+            raise AttributeError("Could not find sustainData attribute. Available attributes: " + 
+                               str([attr for attr in dir(self) if not attr.startswith('__')]))
+        
         self.torch_sustain_data = create_torch_zscore_data(
-            data, self._ZScoreSustainMissingData__sustainData.getNumStages(), self.torch_backend
+            data, sustain_data.getNumStages(), self.torch_backend
         )
         
         # Create GPU-accelerated likelihood calculator
@@ -168,8 +181,20 @@ class TorchZScoreSustainMissingData(ZscoreSustainMissingData):
             
             if self.use_gpu:
                 # Recreate PyTorch components
+                # Access the sustainData attribute
+                sustain_data = getattr(self, '_ZscoreSustainMissingData__sustainData', None)
+                if sustain_data is None:
+                    # Fallback: try different possible attribute names
+                    for attr_name in ['__sustainData', '_sustainData', 'sustainData']:
+                        sustain_data = getattr(self, attr_name, None)
+                        if sustain_data is not None:
+                            break
+                
+                if sustain_data is None:
+                    raise AttributeError("Could not find sustainData attribute")
+                
                 self.torch_sustain_data = create_torch_zscore_data(
-                    self._ZScoreSustainMissingData__sustainData.data, self._ZScoreSustainMissingData__sustainData.getNumStages(), self.torch_backend
+                    sustain_data.data, sustain_data.getNumStages(), self.torch_backend
                 )
                 
                 self.torch_likelihood_calculator = create_zscore_missing_data_likelihood_calculator(
@@ -265,7 +290,7 @@ def benchmark_gpu_vs_cpu(data: np.ndarray, Z_vals: np.ndarray, Z_max: np.ndarray
     
     for _ in range(num_iterations):
         start_time = time.time()
-        _ = cpu_sustain._calculate_likelihood_stage(cpu_sustain._ZScoreSustainMissingData__sustainData, S_test[0])
+        _ = cpu_sustain._calculate_likelihood_stage(cpu_sustain._ZscoreSustainMissingData__sustainData, S_test[0])
         cpu_times.append(time.time() - start_time)
     
     # Benchmark GPU version
@@ -277,7 +302,7 @@ def benchmark_gpu_vs_cpu(data: np.ndarray, Z_vals: np.ndarray, Z_max: np.ndarray
     
     for _ in range(num_iterations):
         start_time = time.time()
-        _ = gpu_sustain._calculate_likelihood_stage(gpu_sustain._ZScoreSustainMissingData__sustainData, S_test[0])
+        _ = gpu_sustain._calculate_likelihood_stage(gpu_sustain._ZscoreSustainMissingData__sustainData, S_test[0])
         gpu_times.append(time.time() - start_time)
     
     return {
