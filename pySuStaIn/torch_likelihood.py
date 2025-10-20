@@ -140,6 +140,10 @@ class TorchZScoreLikelihoodCalculator(TorchLikelihoodCalculator):
         self.max_biomarker_zscore = self.backend.to_torch(max_biomarker_zscore)
         self.std_biomarker_zscore = self.backend.to_torch(std_biomarker_zscore)
         
+        # Ensure stage_biomarker_index has the correct shape (1, N) if it's 1D
+        if len(self.stage_biomarker_index.shape) == 1:
+            self.stage_biomarker_index = self.stage_biomarker_index.unsqueeze(0)
+        
     def _calculate_likelihood_stage_torch(self, sustainData: TorchAbstractSustainData, 
                                         S_single: torch.Tensor) -> torch.Tensor:
         """
@@ -153,6 +157,7 @@ class TorchZScoreLikelihoodCalculator(TorchLikelihoodCalculator):
             Likelihood tensor (M, N+1)
         """
         with self.backend.benchmark_operation('zscore_likelihood_stage'):
+            # stage_biomarker_index is now guaranteed to be 2D with shape (1, N)
             N = self.stage_biomarker_index.shape[1]
             M = sustainData.getNumSamples()
             
@@ -174,7 +179,9 @@ class TorchZScoreLikelihoodCalculator(TorchLikelihoodCalculator):
                 
                 # Find event locations for this biomarker
                 biomarker_mask = (self.stage_biomarker_index == b)
-                event_indices = S_inv[biomarker_mask]
+                # Flatten the mask to match S_inv dimensions
+                biomarker_mask_flat = biomarker_mask.flatten()
+                event_indices = S_inv[biomarker_mask_flat]
                 event_location = torch.cat([
                     torch.tensor([0], device=self.device),
                     event_indices,
@@ -254,6 +261,7 @@ class TorchZScoreMissingDataLikelihoodCalculator(TorchZScoreLikelihoodCalculator
             Likelihood tensor (M, N+1)
         """
         with self.backend.benchmark_operation('zscore_missing_data_likelihood_stage'):
+            # stage_biomarker_index is now guaranteed to be 2D with shape (1, N)
             N = self.stage_biomarker_index.shape[1]
             M = sustainData.getNumSamples()
             B = len(torch.unique(self.stage_biomarker_index))
@@ -319,7 +327,9 @@ class TorchZScoreMissingDataLikelihoodCalculator(TorchZScoreLikelihoodCalculator
             
             # Find event locations for this biomarker
             biomarker_mask = (self.stage_biomarker_index == b)
-            event_indices = S_inv[biomarker_mask]
+            # Flatten the mask to match S_inv dimensions
+            biomarker_mask_flat = biomarker_mask.flatten()
+            event_indices = S_inv[biomarker_mask_flat]
             event_location = torch.cat([
                 torch.tensor([0], device=self.device),
                 event_indices,
