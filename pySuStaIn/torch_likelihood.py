@@ -48,7 +48,9 @@ class TorchLikelihoodCalculator:
         with self.backend.benchmark_operation('calculate_likelihood'):
             # Convert inputs to PyTorch tensors
             S_torch = self.backend.to_torch(S)
-            f_torch = self.backend.to_torch(f)
+            # Ensure f is a numpy array before converting to PyTorch tensor
+            f_array = np.asarray(f) if not isinstance(f, np.ndarray) else f
+            f_torch = self.backend.to_torch(f_array)
             
             M = sustainData.getNumSamples()
             N_S = S.shape[0]

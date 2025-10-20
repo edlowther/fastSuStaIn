@@ -42,10 +42,14 @@ class DeviceManager:
                 warnings.warn("GPU requested but CUDA not available. Falling back to CPU.")
             print("GPU Backend: Using CPU device")
     
-    def to_torch(self, np_array: np.ndarray, requires_grad: bool = False) -> torch.Tensor:
+    def to_torch(self, np_array: Union[np.ndarray, list, tuple], requires_grad: bool = False) -> torch.Tensor:
         """Convert numpy array to PyTorch tensor on the appropriate device."""
         if np_array is None:
             return None
+        
+        # Ensure input is a numpy array
+        if not isinstance(np_array, np.ndarray):
+            np_array = np.asarray(np_array)
         
         tensor = torch.from_numpy(np_array).to(
             device=self.device, 
@@ -134,7 +138,7 @@ class TorchSustainBackend:
         
         return BenchmarkContext(self, operation_name)
     
-    def to_torch(self, np_array: np.ndarray, requires_grad: bool = False) -> torch.Tensor:
+    def to_torch(self, np_array: Union[np.ndarray, list, tuple], requires_grad: bool = False) -> torch.Tensor:
         """Convert numpy array to PyTorch tensor."""
         return self.device_manager.to_torch(np_array, requires_grad)
     
