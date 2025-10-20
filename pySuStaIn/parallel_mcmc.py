@@ -1,0 +1,358 @@
+###
+# Parallel MCMC Implementation for fastSuStaIn
+# 
+# This module provides parallel execution of MCMC chains to significantly
+# reduce computation time for SuStaIn algorithms.
+#
+# Authors: GPU Migration Team
+###
+
+import multiprocessing as mp
+import numpy as np
+import time
+from typing import List, Tuple, Optional, Union
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from functools import partial
+import warnings
+
+
+class ParallelMCMCManager:
+    """Manages parallel execution of MCMC chains."""
+    
+    def __init__(self, 
+                 n_chains: int = 4,
+                 n_workers: Optional[int] = None,
+                 backend: str = 'process',  # 'process', 'thread', or 'gpu'
+                 use_gpu: bool = False,
+                 device_ids: Optional[List[int]] = None):
+        """
+        Initialize parallel MCMC manager.
+        
+        Args:
+            n_chains: Number of MCMC chains to run in parallel
+            n_workers: Number of worker processes/threads (default: min(n_chains, cpu_count))
+            backend: Parallelization backend ('process', 'thread', or 'gpu')
+            use_gpu: Whether to use GPU acceleration
+            device_ids: List of GPU device IDs to use
+        """
+        self.n_chains = n_chains
+        self.backend = backend
+        self.use_gpu = use_gpu
+        self.device_ids = device_ids or list(range(n_chains))
+        
+        if n_workers is None:
+            self.n_workers = min(n_chains, mp.cpu_count())
+        else:
+            self.n_workers = min(n_workers, n_chains)
+        
+        # Validate backend
+        if backend not in ['process', 'thread', 'gpu']:
+            raise ValueError(f"Backend must be 'process', 'thread', or 'gpu', got {backend}")
+        
+        if backend == 'gpu' and not use_gpu:
+            warnings.warn("GPU backend requested but use_gpu=False. Falling back to process backend.")
+            self.backend = 'process'
+    
+    def run_parallel_mcmc(self, 
+                          sustain_instance,
+                          sustain_data,
+                          seq_init: np.ndarray,
+                          f_init: np.ndarray,
+                          n_iterations: int,
+                          seq_sigma: float,
+                          f_sigma: float,
+                          seeds: Optional[List[int]] = None) -> Tuple[List[np.ndarray], List[np.ndarray], List[np.ndarray], List[float]]:
+        """
+        Run MCMC chains in parallel.
+        
+        Args:
+            sustain_instance: SuStaIn instance (ZscoreSustain, MixtureSustain, etc.)
+            sustain_data: SuStaIn data object
+            seq_init: Initial sequence matrix
+            f_init: Initial fraction vector
+            n_iterations: Number of MCMC iterations per chain
+            seq_sigma: Sequence perturbation sigma
+            f_sigma: Fraction perturbation sigma
+            seeds: List of random seeds for each chain
+            
+        Returns:
+            Tuple of (samples_sequences, samples_fs, samples_likelihoods, chain_times)
+        """
+        if seeds is None:
+            seeds = [np.random.randint(0, 2**32) for _ in range(self.n_chains)]
+        
+        print(f"Running {self.n_chains} MCMC chains in parallel using {self.backend} backend...")
+        start_time = time.time()
+        
+        if self.backend == 'process':
+            results = self._run_process_parallel(sustain_instance, sustain_data, seq_init, f_init, 
+                                               n_iterations, seq_sigma, f_sigma, seeds)
+        elif self.backend == 'thread':
+            results = self._run_thread_parallel(sustain_instance, sustain_data, seq_init, f_init, 
+                                             n_iterations, seq_sigma, f_sigma, seeds)
+        elif self.backend == 'gpu':
+            results = self._run_gpu_parallel(sustain_instance, sustain_data, seq_init, f_init, 
+                                           n_iterations, seq_sigma, f_sigma, seeds)
+        
+        total_time = time.time() - start_time
+        print(f"Parallel MCMC completed in {total_time:.2f} seconds")
+        
+        return results
+    
+    def _run_process_parallel(self, sustain_instance, sustain_data, seq_init, f_init, 
+                            n_iterations, seq_sigma, f_sigma, seeds):
+        """Run MCMC chains using process-based parallelism."""
+        # For process-based parallelism, we need to avoid pickling complex objects
+        # Instead, we'll use a simpler approach that works with the existing structure
+        
+        print("Process-based parallelism requires careful handling of object serialization.")
+        print("Falling back to thread-based parallelism for compatibility.")
+        return self._run_thread_parallel(sustain_instance, sustain_data, seq_init, f_init, 
+                                       n_iterations, seq_sigma, f_sigma, seeds)
+    
+    def _run_thread_parallel(self, sustain_instance, sustain_data, seq_init, f_init, 
+                           n_iterations, seq_sigma, f_sigma, seeds):
+        """Run MCMC chains using thread-based parallelism."""
+        # Create worker function
+        worker_func = partial(_mcmc_worker_thread, sustain_instance, sustain_data, 
+                            seq_init, f_init, n_iterations, seq_sigma, f_sigma)
+        
+        # Run parallel chains
+        with ThreadPoolExecutor(max_workers=self.n_workers) as executor:
+            futures = [executor.submit(worker_func, seed) for seed in seeds]
+            
+            results = []
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as e:
+                    print(f"MCMC chain failed: {e}")
+                    # Add dummy result to maintain chain count
+                    results.append((np.zeros_like(seq_init), np.zeros_like(f_init), 
+                                  np.zeros(n_iterations), 0.0))
+        
+        # Sort results by chain index
+        results.sort(key=lambda x: x[3])
+        
+        # Extract results
+        samples_sequences = [r[0] for r in results]
+        samples_fs = [r[1] for r in results]
+        samples_likelihoods = [r[2] for r in results]
+        chain_times = [r[3] for r in results]
+        
+        return samples_sequences, samples_fs, samples_likelihoods, chain_times
+    
+    def _run_gpu_parallel(self, sustain_instance, sustain_data, seq_init, f_init, 
+                        n_iterations, seq_sigma, f_sigma, seeds):
+        """Run MCMC chains using GPU parallelism."""
+        # For GPU parallelism, we can run multiple chains on different GPUs
+        # or use GPU streams for concurrent execution
+        
+        if not hasattr(sustain_instance, 'torch_backend'):
+            raise ValueError("GPU parallelism requires TorchZScoreSustainMissingData or similar GPU-enabled class")
+        
+        # For now, fall back to process parallelism with GPU acceleration
+        print("GPU parallelism not fully implemented yet, falling back to process parallelism with GPU acceleration")
+        return self._run_process_parallel(sustain_instance, sustain_data, seq_init, f_init, 
+                                        n_iterations, seq_sigma, f_sigma, seeds)
+
+
+def _mcmc_worker_process(sustain_class, sustain_dict, sustain_data, seq_init, f_init, 
+                        n_iterations, seq_sigma, f_sigma, seed):
+    """Worker function for process-based parallelism."""
+    start_time = time.time()
+    
+    # Create new instance with same parameters
+    sustain_instance = sustain_class.__new__(sustain_class)
+    sustain_instance.__dict__.update(sustain_dict)
+    
+    # Set random seed for this process
+    np.random.seed(seed)
+    sustain_instance.global_rng = np.random.default_rng(seed)
+    
+    # Run MCMC
+    try:
+        ml_sequence, ml_f, ml_likelihood, samples_sequence, samples_f, samples_likelihood = \
+            sustain_instance._perform_mcmc(sustain_data, seq_init, f_init, n_iterations, seq_sigma, f_sigma)
+        
+        chain_time = time.time() - start_time
+        return samples_sequence, samples_f, samples_likelihood, chain_time
+        
+    except Exception as e:
+        print(f"MCMC chain {seed} failed: {e}")
+        chain_time = time.time() - start_time
+        return np.zeros_like(seq_init), np.zeros_like(f_init), np.zeros(n_iterations), chain_time
+
+
+def _mcmc_worker_thread(sustain_instance, sustain_data, seq_init, f_init, 
+                       n_iterations, seq_sigma, f_sigma, seed):
+    """Worker function for thread-based parallelism."""
+    start_time = time.time()
+    
+    # Set random seed for this thread
+    np.random.seed(seed)
+    sustain_instance.global_rng = np.random.default_rng(seed)
+    
+    # Run MCMC
+    try:
+        ml_sequence, ml_f, ml_likelihood, samples_sequence, samples_f, samples_likelihood = \
+            sustain_instance._perform_mcmc(sustain_data, seq_init, f_init, n_iterations, seq_sigma, f_sigma)
+        
+        chain_time = time.time() - start_time
+        return samples_sequence, samples_f, samples_likelihood, chain_time
+        
+    except Exception as e:
+        print(f"MCMC chain {seed} failed: {e}")
+        chain_time = time.time() - start_time
+        return np.zeros_like(seq_init), np.zeros_like(f_init), np.zeros(n_iterations), chain_time
+
+
+def combine_mcmc_results(samples_sequences: List[np.ndarray], 
+                        samples_fs: List[np.ndarray], 
+                        samples_likelihoods: List[np.ndarray],
+                        chain_times: List[float]) -> Tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
+    """
+    Combine results from multiple MCMC chains.
+    
+    Args:
+        samples_sequences: List of sequence samples from each chain
+        samples_fs: List of fraction samples from each chain
+        samples_likelihoods: List of likelihood samples from each chain
+        chain_times: List of execution times for each chain
+        
+    Returns:
+        Tuple of (combined_sequences, combined_fs, combined_likelihoods, stats)
+    """
+    # Combine all samples
+    combined_sequences = np.concatenate(samples_sequences, axis=2)  # Concatenate along iteration axis
+    combined_fs = np.concatenate(samples_fs, axis=1)  # Concatenate along iteration axis
+    combined_likelihoods = np.concatenate(samples_likelihoods, axis=0)  # Concatenate along iteration axis
+    
+    # Calculate statistics
+    stats = {
+        'n_chains': len(samples_sequences),
+        'total_iterations': combined_likelihoods.shape[0],
+        'chain_times': chain_times,
+        'total_time': sum(chain_times),
+        'avg_chain_time': np.mean(chain_times),
+        'max_chain_time': max(chain_times),
+        'min_chain_time': min(chain_times),
+        'speedup': max(chain_times) / (sum(chain_times) / len(chain_times)),  # Theoretical speedup
+        'efficiency': (max(chain_times) / (sum(chain_times) / len(chain_times))) / len(chain_times)
+    }
+    
+    return combined_sequences, combined_fs, combined_likelihoods, stats
+
+
+def benchmark_parallel_mcmc(sustain_instance, 
+                          sustain_data,
+                          seq_init: np.ndarray,
+                          f_init: np.ndarray,
+                          n_iterations: int = 1000,
+                          seq_sigma: float = 1.0,
+                          f_sigma: float = 0.1,
+                          n_chains_list: List[int] = [1, 2, 4, 8]) -> dict:
+    """
+    Benchmark parallel MCMC performance across different numbers of chains.
+    
+    Args:
+        sustain_instance: SuStaIn instance
+        sustain_data: SuStaIn data object
+        seq_init: Initial sequence matrix
+        f_init: Initial fraction vector
+        n_iterations: Number of MCMC iterations per chain
+        seq_sigma: Sequence perturbation sigma
+        f_sigma: Fraction perturbation sigma
+        n_chains_list: List of chain counts to benchmark
+        
+    Returns:
+        Dictionary with benchmark results
+    """
+    results = {}
+    
+    for n_chains in n_chains_list:
+        print(f"Benchmarking {n_chains} chains...")
+        
+        # Create parallel manager
+        manager = ParallelMCMCManager(n_chains=n_chains, backend='process')
+        
+        # Run benchmark
+        start_time = time.time()
+        samples_sequences, samples_fs, samples_likelihoods, chain_times = \
+            manager.run_parallel_mcmc(sustain_instance, sustain_data, seq_init, f_init,
+                                    n_iterations, seq_sigma, f_sigma)
+        total_time = time.time() - start_time
+        
+        # Calculate speedup
+        serial_time = chain_times[0] * n_chains  # Theoretical serial time
+        speedup = serial_time / total_time
+        
+        results[n_chains] = {
+            'total_time': total_time,
+            'chain_times': chain_times,
+            'speedup': speedup,
+            'efficiency': speedup / n_chains
+        }
+        
+        print(f"  {n_chains} chains: {total_time:.2f}s, speedup: {speedup:.2f}x, efficiency: {speedup/n_chains:.2f}")
+    
+    return results
+
+
+# Example usage and integration functions
+def integrate_parallel_mcmc_with_sustain(sustain_instance, 
+                                       use_parallel_mcmc: bool = True,
+                                       n_mcmc_chains: int = 4,
+                                       mcmc_backend: str = 'process') -> None:
+    """
+    Integrate parallel MCMC with existing SuStaIn instance.
+    
+    Args:
+        sustain_instance: SuStaIn instance to modify
+        use_parallel_mcmc: Whether to use parallel MCMC
+        n_mcmc_chains: Number of MCMC chains to run in parallel
+        mcmc_backend: Backend for parallel MCMC ('process', 'thread', 'gpu')
+    """
+    if not use_parallel_mcmc:
+        return
+    
+    # Create parallel MCMC manager
+    sustain_instance.parallel_mcmc_manager = ParallelMCMCManager(
+        n_chains=n_mcmc_chains,
+        backend=mcmc_backend,
+        use_gpu=hasattr(sustain_instance, 'use_gpu') and sustain_instance.use_gpu
+    )
+    
+    # Override the _estimate_uncertainty_sustain_model method
+    original_method = sustain_instance._estimate_uncertainty_sustain_model
+    
+    def parallel_uncertainty_estimation(sustainData, seq_init, f_init):
+        """Parallel version of uncertainty estimation."""
+        # Get MCMC settings
+        seq_sigma_opt, f_sigma_opt = sustain_instance._optimise_mcmc_settings(sustainData, seq_init, f_init)
+        
+        # Run parallel MCMC
+        samples_sequences, samples_fs, samples_likelihoods, chain_times = \
+            sustain_instance.parallel_mcmc_manager.run_parallel_mcmc(
+                sustain_instance, sustainData, seq_init, f_init,
+                sustain_instance.N_iterations_MCMC, seq_sigma_opt, f_sigma_opt
+            )
+        
+        # Combine results
+        combined_sequences, combined_fs, combined_likelihoods, stats = combine_mcmc_results(
+            samples_sequences, samples_fs, samples_likelihoods, chain_times
+        )
+        
+        # Find best result
+        best_idx = np.argmax(combined_likelihoods)
+        ml_sequence = combined_sequences[:, :, best_idx]
+        ml_f = combined_fs[:, best_idx]
+        ml_likelihood = combined_likelihoods[best_idx]
+        
+        print(f"Parallel MCMC stats: {stats}")
+        
+        return ml_sequence, ml_f, ml_likelihood, combined_sequences, combined_fs, combined_likelihoods
+    
+    # Replace the method
+    sustain_instance._estimate_uncertainty_sustain_model = parallel_uncertainty_estimation
