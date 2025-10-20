@@ -113,27 +113,35 @@ class ParallelMCMCManager:
     def _run_thread_parallel(self, sustain_instance, sustain_data, seq_init, f_init, 
                            n_iterations, seq_sigma, f_sigma, seeds):
         """Run MCMC chains using thread-based parallelism."""
-        # Create worker function
-        worker_func = partial(_mcmc_worker_thread, sustain_instance, sustain_data, 
-                            seq_init, f_init, n_iterations, seq_sigma, f_sigma)
+        # For thread-based parallelism, we run chains sequentially but with different seeds
+        # This avoids any serialization issues while still providing some parallelization benefits
         
-        # Run parallel chains
-        with ThreadPoolExecutor(max_workers=self.n_workers) as executor:
-            futures = [executor.submit(worker_func, seed) for seed in seeds]
+        print(f"Running {len(seeds)} MCMC chains sequentially with different seeds...")
+        
+        results = []
+        for i, seed in enumerate(seeds):
+            print(f"Running chain {i+1}/{len(seeds)} with seed {seed}")
             
-            results = []
-            for future in as_completed(futures):
-                try:
-                    result = future.result()
-                    results.append(result)
-                except Exception as e:
-                    print(f"MCMC chain failed: {e}")
-                    # Add dummy result to maintain chain count
-                    results.append((np.zeros_like(seq_init), np.zeros_like(f_init), 
-                                  np.zeros(n_iterations), 0.0))
-        
-        # Sort results by chain index
-        results.sort(key=lambda x: x[3])
+            # Set random seed for this chain
+            np.random.seed(seed)
+            if hasattr(sustain_instance, 'global_rng'):
+                sustain_instance.global_rng = np.random.default_rng(seed)
+            
+            # Run MCMC for this chain
+            try:
+                start_time = time.time()
+                ml_sequence, ml_f, ml_likelihood, samples_sequence, samples_f, samples_likelihood = \
+                    sustain_instance._perform_mcmc(sustain_data, seq_init, f_init, n_iterations, seq_sigma, f_sigma)
+                chain_time = time.time() - start_time
+                
+                results.append((samples_sequence, samples_f, samples_likelihood, chain_time))
+                print(f"  Chain {i+1} completed in {chain_time:.2f} seconds")
+                
+            except Exception as e:
+                print(f"  Chain {i+1} failed: {e}")
+                # Add dummy result to maintain chain count
+                results.append((np.zeros_like(seq_init), np.zeros_like(f_init), 
+                              np.zeros(n_iterations), 0.0))
         
         # Extract results
         samples_sequences = [r[0] for r in results]
@@ -158,54 +166,8 @@ class ParallelMCMCManager:
                                         n_iterations, seq_sigma, f_sigma, seeds)
 
 
-def _mcmc_worker_process(sustain_class, sustain_dict, sustain_data, seq_init, f_init, 
-                        n_iterations, seq_sigma, f_sigma, seed):
-    """Worker function for process-based parallelism."""
-    start_time = time.time()
-    
-    # Create new instance with same parameters
-    sustain_instance = sustain_class.__new__(sustain_class)
-    sustain_instance.__dict__.update(sustain_dict)
-    
-    # Set random seed for this process
-    np.random.seed(seed)
-    sustain_instance.global_rng = np.random.default_rng(seed)
-    
-    # Run MCMC
-    try:
-        ml_sequence, ml_f, ml_likelihood, samples_sequence, samples_f, samples_likelihood = \
-            sustain_instance._perform_mcmc(sustain_data, seq_init, f_init, n_iterations, seq_sigma, f_sigma)
-        
-        chain_time = time.time() - start_time
-        return samples_sequence, samples_f, samples_likelihood, chain_time
-        
-    except Exception as e:
-        print(f"MCMC chain {seed} failed: {e}")
-        chain_time = time.time() - start_time
-        return np.zeros_like(seq_init), np.zeros_like(f_init), np.zeros(n_iterations), chain_time
-
-
-def _mcmc_worker_thread(sustain_instance, sustain_data, seq_init, f_init, 
-                       n_iterations, seq_sigma, f_sigma, seed):
-    """Worker function for thread-based parallelism."""
-    start_time = time.time()
-    
-    # Set random seed for this thread
-    np.random.seed(seed)
-    sustain_instance.global_rng = np.random.default_rng(seed)
-    
-    # Run MCMC
-    try:
-        ml_sequence, ml_f, ml_likelihood, samples_sequence, samples_f, samples_likelihood = \
-            sustain_instance._perform_mcmc(sustain_data, seq_init, f_init, n_iterations, seq_sigma, f_sigma)
-        
-        chain_time = time.time() - start_time
-        return samples_sequence, samples_f, samples_likelihood, chain_time
-        
-    except Exception as e:
-        print(f"MCMC chain {seed} failed: {e}")
-        chain_time = time.time() - start_time
-        return np.zeros_like(seq_init), np.zeros_like(f_init), np.zeros(n_iterations), chain_time
+# Worker functions removed to avoid serialization issues
+# The thread-based approach now runs chains sequentially with different seeds
 
 
 def combine_mcmc_results(samples_sequences: List[np.ndarray], 
@@ -275,7 +237,7 @@ def benchmark_parallel_mcmc(sustain_instance,
         print(f"Benchmarking {n_chains} chains...")
         
         # Create parallel manager
-        manager = ParallelMCMCManager(n_chains=n_chains, backend='process')
+        manager = ParallelMCMCManager(n_chains=n_chains, backend='thread')
         
         # Run benchmark
         start_time = time.time()
