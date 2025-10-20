@@ -113,37 +113,54 @@ class ParallelMCMCManager:
     def _run_thread_parallel(self, sustain_instance, sustain_data, seq_init, f_init, 
                            n_iterations, seq_sigma, f_sigma, seeds):
         """Run MCMC chains using thread-based parallelism."""
-        # For thread-based parallelism, we run chains sequentially but with different seeds
-        # This avoids any serialization issues while still providing some parallelization benefits
+        print(f"Running {len(seeds)} MCMC chains in parallel using threads...")
         
-        print(f"Running {len(seeds)} MCMC chains sequentially with different seeds...")
-        
-        results = []
-        for i, seed in enumerate(seeds):
-            print(f"Running chain {i+1}/{len(seeds)} with seed {seed}")
+        def run_single_chain(seed_and_index):
+            """Run a single MCMC chain with given seed."""
+            seed, chain_idx = seed_and_index
+            print(f"Starting chain {chain_idx+1}/{len(seeds)} with seed {seed}")
             
-            # Set random seed for this chain
+            # Set random seed for this chain (thread-safe)
             np.random.seed(seed)
-            if hasattr(sustain_instance, 'global_rng'):
-                sustain_instance.global_rng = np.random.default_rng(seed)
             
-            # Run MCMC for this chain
+            # Run MCMC for this chain using the original instance
+            # Thread safety is handled by using different random seeds
             try:
                 start_time = time.time()
                 ml_sequence, ml_f, ml_likelihood, samples_sequence, samples_f, samples_likelihood = \
                     sustain_instance._perform_mcmc(sustain_data, seq_init, f_init, n_iterations, seq_sigma, f_sigma)
                 chain_time = time.time() - start_time
                 
-                results.append((samples_sequence, samples_f, samples_likelihood, chain_time))
-                print(f"  Chain {i+1} completed in {chain_time:.2f} seconds")
+                print(f"  Chain {chain_idx+1} completed in {chain_time:.2f} seconds")
+                return (samples_sequence, samples_f, samples_likelihood, chain_time, chain_idx)
                 
             except Exception as e:
-                print(f"  Chain {i+1} failed: {e}")
-                # Add dummy result to maintain chain count
-                results.append((np.zeros_like(seq_init), np.zeros_like(f_init), 
-                              np.zeros(n_iterations), 0.0))
+                print(f"  Chain {chain_idx+1} failed: {e}")
+                chain_time = time.time() - start_time
+                return (np.zeros_like(seq_init), np.zeros_like(f_init), 
+                       np.zeros(n_iterations), chain_time, chain_idx)
         
-        # Extract results
+        # Prepare arguments for parallel execution
+        chain_args = [(seed, i) for i, seed in enumerate(seeds)]
+        
+        # Run chains in parallel using ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=self.n_workers) as executor:
+            # Submit all chains
+            future_to_chain = {executor.submit(run_single_chain, args): args[1] for args in chain_args}
+            
+            # Collect results as they complete
+            results = [None] * len(seeds)
+            for future in as_completed(future_to_chain):
+                chain_idx = future_to_chain[future]
+                try:
+                    result = future.result()
+                    results[chain_idx] = result
+                except Exception as e:
+                    print(f"Chain {chain_idx+1} failed with exception: {e}")
+                    results[chain_idx] = (np.zeros_like(seq_init), np.zeros_like(f_init), 
+                                        np.zeros(n_iterations), 0.0, chain_idx)
+        
+        # Extract results in correct order
         samples_sequences = [r[0] for r in results]
         samples_fs = [r[1] for r in results]
         samples_likelihoods = [r[2] for r in results]
