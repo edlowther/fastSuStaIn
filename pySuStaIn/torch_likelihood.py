@@ -63,7 +63,8 @@ class TorchLikelihoodCalculator:
             # Original: f_val_mat = np.tile(f, (1, N + 1, M))
             # GPU version: Use broadcasting for better memory efficiency
             f_val_mat = f_reshaped.expand(N_S, N + 1, M)  # (N_S, N+1, M)
-            f_val_mat = f_val_mat.transpose(2, 1, 0)  # (M, N+1, N_S)
+            # Use permute to achieve the same result as np.transpose(f_val_mat, (2, 1, 0))
+            f_val_mat = f_val_mat.permute(2, 1, 0)  # (M, N+1, N_S)
             
             # Initialize p_perm_k tensor
             p_perm_k = torch.zeros((M, N + 1, N_S), device=self.device, dtype=self.dtype)
