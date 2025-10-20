@@ -232,7 +232,8 @@ class TorchZScoreLikelihoodCalculator(TorchLikelihoodCalculator):
             x = (data_expanded - stage_expanded) / sigmat_expanded  # (M, B, N+1)
             
             # Compute log-likelihood components
-            factor = torch.log(1.0 / torch.sqrt(2.0 * torch.pi) * self.std_biomarker_zscore)
+            sqrt_2pi = torch.sqrt(torch.tensor(2.0 * 3.141592653589793, device=self.device, dtype=self.dtype))
+            factor = torch.log(1.0 / sqrt_2pi * self.std_biomarker_zscore)
             factor_expanded = factor.unsqueeze(0).unsqueeze(2)  # (1, B, 1)
             coeff = torch.log(1.0 / float(N + 1))
             
@@ -280,7 +281,8 @@ class TorchZScoreMissingDataLikelihoodCalculator(TorchZScoreLikelihoodCalculator
             sigmat = self.std_biomarker_zscore.unsqueeze(0).expand(M, -1)  # (M, B)
             
             # Compute factor and coefficient
-            factor = torch.log(1.0 / torch.sqrt(2.0 * torch.pi) * self.std_biomarker_zscore)
+            sqrt_2pi = torch.sqrt(torch.tensor(2.0 * 3.141592653589793, device=self.device, dtype=self.dtype))
+            factor = torch.log(1.0 / sqrt_2pi * self.std_biomarker_zscore)
             factor_expanded = factor.unsqueeze(0).expand(M, -1)  # (M, B)
             coeff = torch.log(1.0 / float(N + 1))
             
